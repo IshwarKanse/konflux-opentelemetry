@@ -100,40 +100,51 @@ with open('./patch_csv.yaml') as pf:
     if patch['spec'].get('replaces'):
         upstream_csv['spec']['replaces'] = patch['spec']['replaces']
 
-    # volumes
-    if not upstream_csv['spec']['install']['spec']['deployments'][0]['spec']['template']['spec'].get('volumes'):
-        upstream_csv['spec']['install']['spec']['deployments'][0]['spec']['template']['spec']['volumes']=[]
-    upstream_csv['spec']['install']['spec']['deployments'][0]['spec']['template']['spec']['volumes'].extend(patch['spec']['install']['spec']['deployments'][0]['spec']['template']['spec'].get('extra_volumes', []))
+    upstream_deployments = upstream_csv['spec']['install']['spec']['deployments']
+    upstream_deployments_by_name = {d['name']: d for d in upstream_deployments}
 
-    upstream_containers = upstream_csv['spec']['install']['spec']['deployments'][0]['spec']['template']['spec']['containers']
-    for container in             patch['spec']['install']['spec']['deployments'][0]['spec']['template']['spec']['containers']:
-        upstream_container = get_container(upstream_containers, container['name'])
-        if upstream_container is None:
-            print("container preset in patch, but not in upstream CSV", container['name'])
+    for patch_deployment in patch['spec']['install']['spec']['deployments']:
+        dep_name = patch_deployment['name']
+        upstream_deployment = upstream_deployments_by_name.get(dep_name)
+        if upstream_deployment is None:
+            print("deployment present in patch, but not in upstream CSV:", dep_name)
             exit(2)
-        print("Patching ", container['name'])
+        print("Patching deployment:", dep_name)
 
-        # image
-        if container.get('image') is not None:
-            upstream_container['image'] = container.get('image')
+        # volumes
+        if not upstream_deployment['spec']['template']['spec'].get('volumes'):
+            upstream_deployment['spec']['template']['spec']['volumes'] = []
+        upstream_deployment['spec']['template']['spec']['volumes'].extend(
+            patch_deployment['spec']['template']['spec'].get('extra_volumes', []))
 
-        # args
-        if container.get('extra_args') is not None:
-            upstream_container['args'] = upstream_container['args'] + container['extra_args']
-        for arg in container.get('remove_args', []):
-            upstream_container['args'].remove(arg)
+        upstream_containers = upstream_deployment['spec']['template']['spec']['containers']
+        for container in patch_deployment['spec']['template']['spec']['containers']:
+            upstream_container = get_container(upstream_containers, container['name'])
+            if upstream_container is None:
+                print("container present in patch, but not in upstream CSV:", container['name'])
+                exit(2)
+            print("  Patching container:", container['name'])
 
-        # env vars
-        # env vars
-        if container.get('extra_env') is not None:
-            env = merge_lists_by_key(upstream_container.get("env", []), container.get("extra_env", []), "name")
-            upstream_container['env'] = env
+            # image
+            if container.get('image') is not None:
+                upstream_container['image'] = container.get('image')
 
-        # volume mounts
-        if container.get('extra_volumeMounts') is not None:
-            if  upstream_container.get('volumeMounts') is not None:
-                upstream_container['volumeMounts'] = upstream_container.get('volumeMounts') + container.get('extra_volumeMounts')
-            else:
-                upstream_container['volumeMounts'] = container.get('extra_volumeMounts')
+            # args
+            if container.get('extra_args') is not None:
+                upstream_container['args'] = upstream_container.get('args', []) + container['extra_args']
+            for arg in container.get('remove_args', []):
+                upstream_container['args'].remove(arg)
+
+            # env vars
+            if container.get('extra_env') is not None:
+                env = merge_lists_by_key(upstream_container.get("env", []), container.get("extra_env", []), "name")
+                upstream_container['env'] = env
+
+            # volume mounts
+            if container.get('extra_volumeMounts') is not None:
+                if upstream_container.get('volumeMounts') is not None:
+                    upstream_container['volumeMounts'] = upstream_container.get('volumeMounts') + container.get('extra_volumeMounts')
+                else:
+                    upstream_container['volumeMounts'] = container.get('extra_volumeMounts')
 
 dump_manifest(os.getenv('CSV_FILE'), upstream_csv)
